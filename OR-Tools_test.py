@@ -4,7 +4,6 @@ import pandas as pd
 import os
 from collections import defaultdict
 
-import scratch
 
 def generate_patterns(stock_length, demand_lengths, kerf_width):
     """生成考虑锯缝的有效切割模式"""
