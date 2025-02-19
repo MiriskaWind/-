@@ -4,6 +4,7 @@ import pandas as pd
 import os
 from collections import defaultdict
 
+import scratch
 
 def generate_patterns(stock_length, demand_lengths, kerf_width):
     """生成考虑锯缝的有效切割模式"""
@@ -37,16 +38,20 @@ def create_data_model():
     return {
         "kerf_width": 5,  # 默认锯缝宽度改为5mm
         "stock": [
-            {"length": 6000, "quantity": 30},
-            {"length": 5400, "quantity": 150},
+            {"length": 6000, "quantity": 148},
+            {"length": 5400, "quantity": 30},
+            {"length": 5000, "quantity": 30},
         ],
         "demands": [
-            {"length": 2465, "quantity": 30},
-            {"length": 1845, "quantity": 45},
-            {"length": 1645, "quantity": 25},
-            {"length": 1330, "quantity": 30},
-            {"length": 980, "quantity": 45},
-            {"length": 650, "quantity": 25},
+            {"length": 2465, "quantity": 45},
+            {"length": 2215, "quantity": 75},
+            {"length": 2135, "quantity": 55},
+            {"length": 2015, "quantity": 165},
+            {"length": 1885, "quantity": 70},
+            {"length": 1745, "quantity": 122},
+            {"length": 986, "quantity": 33},
+            {"length": 785, "quantity": 45},
+            {"length": 656, "quantity": 25},
         ]
     }
 
@@ -133,7 +138,7 @@ def main():
                     detail = {
                         "序号": serial_no,
                         "原材料长度(mm)": stock_len,
-                        "成品组合": " | ".join([f"{l}mm×{c}"
+                        "成品组合": " , ".join([f"{l}mm×{c}"
                                                 for l, c in zip(demand_lengths, pattern["combo"])
                                                 if c > 0]),
                         "余料(mm)": pattern["waste"],
