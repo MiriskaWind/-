@@ -1,13 +1,14 @@
 import sys
+import os
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QGroupBox, QLineEdit, QTableWidget,
-                             QHeaderView, QMessageBox, QFileDialog, QLabel, QItemDelegate, QTableWidgetItem)
+                             QHeaderView, QMessageBox, QFileDialog, QLabel, QItemDelegate, QTableWidgetItem,
+                             QProgressDialog)
 from PyQt5.QtGui import QFont, QIntValidator, QIcon
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import pandas as pd
 import itertools
 from ortools.linear_solver import pywraplp
-import os
 from collections import defaultdict
 
 
@@ -35,13 +36,44 @@ class IntegerDelegate(QItemDelegate):
         model.setData(index, value, Qt.EditRole)
 
 
+class OptimizationThread(QThread):
+    """
+    A QThread class to run the optimization in a separate thread,
+    allowing the GUI to remain responsive and display progress.
+    """
+    progress_update = pyqtSignal(int)  # Signal to update progress bar
+    result_ready = pyqtSignal(str)  # Signal to send the result (path to the Excel file) or error message
+
+    def __init__(self, kerf_width):
+        super().__init__()
+        self.kerf_width = kerf_width
+        self.error_message = None  # Store error message if optimization fails
+
+    def run(self):
+        try:
+            output_path = main(self.kerf_width, self.progress_update)
+            self.result_ready.emit(output_path)  # Emit the path to the Excel file
+        except Exception as e:
+            self.error_message = str(e)  # Store the error message
+            self.result_ready.emit(None)  # Emit None to signal an error
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LinerCut")  # 设置窗口标题
         self.setGeometry(100, 100, 800, 600)  # 设置窗口大小
         try:
-            self.setWindowIcon(QIcon('./icon/LinerCut.png'))  # 设置窗口图标
+            # Determine if running as a bundled application
+            if getattr(sys, 'frozen', False):
+                # If bundled, use the path of the executable
+                base_path = os.path.dirname(sys.executable)
+                icon_path = os.path.join(base_path, 'icon', 'LinerCut.png')
+            else:
+                # If not bundled, use the script's directory
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                icon_path = os.path.join(base_path, 'icon', 'LinerCut.png')
+
+            self.setWindowIcon(QIcon(icon_path))  # 设置窗口图标
         except Exception as e:
             print(f"Error setting icon: {e}")
         self.initUI()
@@ -225,12 +257,42 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "警告", "无效的刀口锯缝值，请使用整数。")
             return
 
-        # 运行优化算法
-        try:
-            main(kerf_width)
-        except Exception as e:
-            print(f"Error during optimization: {e}")
-            QMessageBox.critical(self, "错误", f"优化失败: {e}")
+        # Create and show the progress dialog
+        self.progress_dialog = QProgressDialog("优化计算中...", "取消", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowTitle("优化进度")
+        self.progress_dialog.setCancelButtonText("取消")
+        self.progress_dialog.setAutoClose(True)  # Close automatically when finished
+        self.progress_dialog.setAutoReset(True)  # Reset when finished
+        self.progress_dialog.setMinimumDuration(0)  # Show immediately
+        self.progress_dialog.show()
+
+        # 创建并启动优化线程
+        self.optimization_thread = OptimizationThread(kerf_width)
+        self.optimization_thread.progress_update.connect(self.update_progress)
+        self.optimization_thread.result_ready.connect(self.optimization_finished)
+        self.optimization_thread.start()
+
+
+    def update_progress(self, value):
+        """
+        Updates the progress bar in the progress dialog.
+        """
+        self.progress_dialog.setValue(value)
+        if self.progress_dialog.wasCanceled():
+            self.optimization_thread.terminate()  # Stop the optimization thread if canceled
+            self.optimization_thread.wait()
+
+    def optimization_finished(self, output_path):
+        """
+        Handles the result of the optimization thread.
+        Displays a message box with the result or any error message.
+        """
+        if output_path:
+            QMessageBox.information(self, "优化完成", f"优化切割方案已生成至：{output_path}")
+        else:
+            QMessageBox.critical(self, "优化失败", f"优化失败: {self.optimization_thread.error_message}")
+
 
     def generate_template(self):
         """在桌面生成下料模板Excel文件"""
@@ -289,7 +351,11 @@ def create_data_model(kerf_width):
     }
 
 
-def main(kerf_width):
+def main(kerf_width, progress_callback):
+    """
+    Main function to run the optimization.
+    Includes a callback to update the progress bar.
+    """
     try:
         data = create_data_model(kerf_width)
         kerf_width = data["kerf_width"]
@@ -299,12 +365,14 @@ def main(kerf_width):
 
         # 生成所有原材料的切割模式
         stock_patterns = {}
-        for s in stock:
+        for i, s in enumerate(stock):
             patterns = generate_patterns(s["length"], demand_lengths, kerf_width)
             stock_patterns[s["length"]] = {
                 "patterns": patterns,
                 "stock_qty": s["quantity"]
             }
+            progress = int((i + 1) / len(stock) * 20)  # 20% for pattern generation
+            progress_callback.emit(progress)
 
         # 创建求解器
         solver = pywraplp.Solver.CreateSolver("SCIP")
@@ -326,7 +394,8 @@ def main(kerf_width):
 
         # 需求约束
         for i, demand in enumerate(demands):
-            constraint = solver.Constraint(demand["quantity"], solver.infinity())
+            # Change the constraint to an equality constraint
+            constraint = solver.Constraint(demand["quantity"], demand["quantity"])
             for stock_len in variables:
                 for var_idx, var in enumerate(variables[stock_len]):
                     pattern = stock_patterns[stock_len]["patterns"][var_idx]["combo"]
@@ -341,8 +410,9 @@ def main(kerf_width):
         objective.SetMinimization()
 
         # 求解
-        status = solver.Solve()
+        progress_callback.emit(50)  # Indicate solver is running
 
+        status = solver.Solve()
         if status == solver.OPTIMAL:
             print("优化成功，正在生成报告...")
             detailed_records = []
@@ -382,6 +452,7 @@ def main(kerf_width):
                         }
                         detailed_records.append(detail)
                         serial_no += 1
+            progress_callback.emit(70)
 
             # 生成Excel报告
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -410,6 +481,7 @@ def main(kerf_width):
                 df_summary.to_excel(writer, sheet_name="方案汇总", index=False)
 
                 # 需求完成情况
+                 # 需求完成情况
                 completed = []
                 for i, demand in enumerate(demands):
                     total = sum(
@@ -420,22 +492,34 @@ def main(kerf_width):
                             variables[stock_len]
                         )
                     )
+                    # Ensure that the completed quantity does not exceed the demand quantity
+                    completed_quantity = min(int(total), demands[i]["quantity"])
+
                     completed.append({
-                        "成品规格(mm)": d["length"],
-                        "需求数量": d["quantity"],
-                        "完成数量": int(total),
-                        "完成率(%)": round(min(100, 100 * total / d["quantity"]), 2)
+                        "成品规格(mm)": demands[i]["length"],
+                        "需求数量": demands[i]["quantity"],
+                        "完成数量": completed_quantity,
+                        "完成率(%)": round(min(100, 100 * completed_quantity / demands[i]["quantity"]), 2)
                     })
                 pd.DataFrame(completed).to_excel(writer, sheet_name="需求完成", index=False)
 
             print(f"报告已生成至：{output_path}")
+            progress_callback.emit(100) # Indicate completion of Excel writing
+
+            return output_path
         else:
             print("未找到可行解")
+            return None
     except Exception as e:
         print(f"Error in main function: {e}")  # 打印错误信息
+        raise e
 
 
 if __name__ == "__main__":
+    # Set the appropriate flag for disabling the console window on Windows
+    if os.name == 'nt':
+        import ctypes
+        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
