@@ -69,6 +69,8 @@ class CustomProgressDialog(QProgressDialog):  # 继承自QProgressDialog
         self.setAutoReset(True)  # Reset when finished
         self.setMinimumDuration(0)  # Show immediately
         self.setValue(0)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowMaximizeButtonHint & ~Qt.WindowContextHelpButtonHint)  # 禁止最大化按钮
+        self.setFixedSize(self.width(), self.height()) # 禁止拉伸窗口大小
 
         # 移除进度条的文本显示
         self.setLabelText("")  # 移除标签文本
