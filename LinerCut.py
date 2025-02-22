@@ -13,6 +13,8 @@ from collections import defaultdict
 import datetime
 import math
 import io
+import openpyxl
+from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
 
 
 # 定义全局变量
@@ -838,7 +840,7 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
             current_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
             output_path = os.path.join(desktop, f"优化切割方案_{current_time}.xlsx")
 
-            with pd.ExcelWriter(output_path) as writer:
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                 # 详细记录表
                 df_detail = pd.DataFrame(detailed_records)
                 df_detail = df_detail[[
@@ -905,6 +907,36 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
                 }
                 df_summary_info = pd.DataFrame(summary_data)
                 df_summary_info.to_excel(writer, sheet_name="统计信息", index=False)
+
+                # 设置边框样式
+                thin_border = Border(bottom=Side(style='thin', color='b7ffb7'))
+
+                # 循环所有sheet，添加边框和隔行浅灰色背景
+                for sheet_name in writer.sheets:
+                    sheet = writer.sheets[sheet_name]
+                    # 隔行设置背景色
+                    for row_index, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row, min_col=1, max_col=sheet.max_column), start=2):
+                        if row_index % 2 == 0:  # 偶数行
+                            for cell in row:
+                                cell.fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+                        for cell in row:
+                            cell.border = thin_border
+
+                    # 自适应列宽
+                    for column_cells in sheet.columns:
+                        max_length = 0
+                        column = column_cells[0].column_letter  # 获取列字母
+                        for cell in column_cells:
+                            try:  # 必要的，因为不是所有单元格都有值
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2) * 1.2
+                        sheet.column_dimensions[column].width = adjusted_width
+
+                    # 取消网格线
+                    sheet.sheet_view.showGridLines = False
 
             print(f"报告已生成至：{output_path}")
             progress_callback.emit(100) # Indicate completion of Excel writing
