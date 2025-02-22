@@ -12,6 +12,7 @@ from ortools.linear_solver import pywraplp
 from collections import defaultdict
 import datetime
 import math
+import io
 
 
 # 定义全局变量
@@ -321,7 +322,7 @@ class MainWindow(QWidget):
         if not text:
             return
 
-        # 将剪贴板数据转换为DataFrame，方便处理
+        # 将剪贴板数据转换为 DataFrame，方便处理
         try:
             df = pd.read_csv(io.StringIO(text), sep='\t', header=None)
         except Exception as e:
