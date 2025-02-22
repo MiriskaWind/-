@@ -51,10 +51,11 @@ class OptimizationThread(QThread):
     result_ready = pyqtSignal(str)  # Signal to send the result (path to the Excel file) or error message
     error_signal = pyqtSignal(str)
 
-    def __init__(self, kerf_width, solver_time_limit):
+    def __init__(self, kerf_width, solver_time_limit, max_cut_types):
         super().__init__()
         self.kerf_width = kerf_width
         self.solver_time_limit = solver_time_limit
+        self.max_cut_types = max_cut_types
         self.error_message = None  # Store error message if optimization fails
         self.mutex = QMutex()
         self.wait_condition = QWaitCondition()
@@ -62,7 +63,7 @@ class OptimizationThread(QThread):
 
     def run(self):
         try:
-            output_path = main(self.kerf_width, self.solver_time_limit, self.progress_update, self.mutex, self.wait_condition, self)
+            output_path = main(self.kerf_width, self.solver_time_limit, self.max_cut_types, self.progress_update, self.mutex, self.wait_condition, self)
             if not self.cancelled:
                 self.result_ready.emit(output_path)  # Emit the path to the Excel file
         except Exception as e:
@@ -225,9 +226,21 @@ class MainWindow(QWidget):
         solver_time_hbox.addWidget(self.solver_time_label)
         solver_time_hbox.addWidget(self.solver_time_input)
 
+        # 创建一个 QHBoxLayout 用于调锯次数标签和输入框，实现水平布局
+        saw_count_hbox = QHBoxLayout()
+        self.saw_count_label = QLabel("调锯次数:")
+        self.saw_count_input = QLineEdit("5")
+        self.saw_count_input.setValidator(QIntValidator())  # 只允许整数
+        self.saw_count_input.setMaximumWidth(50)  # 进一步减少调锯次数输入栏宽度
+
+        # 将标签和输入框添加到水平布局中
+        saw_count_hbox.addWidget(self.saw_count_label)
+        saw_count_hbox.addWidget(self.saw_count_input)
+
         # 将水平布局添加到参数布局中
         parameter_layout.addLayout(saw_kerf_hbox)
         parameter_layout.addLayout(solver_time_hbox)
+        parameter_layout.addLayout(saw_count_hbox)
 
         # 添加伸缩器，使标签和输入框靠左对齐
         parameter_layout.addStretch(1)
@@ -467,6 +480,13 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "警告", "无效的求解时间值，请使用整数。")
             return
 
+        # 获取调锯次数的值
+        try:
+            max_cut_types = int(self.saw_count_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "警告", "无效的调锯次数值，请使用整数。")
+            return
+
         # 创建并显示进度对话框
         self.progress_dialog = CustomProgressDialog(self)
         self.progress_dialog.canceled.connect(self.cancel_optimization)  # Connect cancel signal
@@ -474,7 +494,7 @@ class MainWindow(QWidget):
         self.progress_dialog.show()
 
         # 创建并启动优化线程
-        self.optimization_thread = OptimizationThread(kerf_width, solver_time_limit)
+        self.optimization_thread = OptimizationThread(kerf_width, solver_time_limit, max_cut_types)
         try:
             self.optimization_thread.progress_update.connect(self.update_progress)
             self.optimization_thread.result_ready.connect(self.optimization_finished)
@@ -618,13 +638,17 @@ class MainWindow(QWidget):
         """Adds a row to the demands table."""
         self.demands_table.insertRow(self.demands_table.rowCount())
 
-def generate_patterns(stock_length, demand_lengths, kerf_width, progress_callback, total_demands):
+def generate_patterns(stock_length, demand_lengths, kerf_width, max_cut_types, progress_callback, total_demands):
     """生成考虑锯缝的有效切割模式"""
     patterns = []
     max_counts = [stock_length // length for length in demand_lengths]
 
     # 生成所有可能的切割组合
     for i, combo in enumerate(itertools.product(*[range(0, c + 1) for c in max_counts])):
+        # 限制每种切割模式最多只能包含 max_cut_types 种不同的长度规格
+        if sum(1 for c in combo if c > 0) > max_cut_types:
+            continue
+
         total_pieces = sum(combo)
         if total_pieces == 0:
             continue
@@ -657,7 +681,7 @@ def create_data_model(kerf_width):
     }
 
 
-def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition, thread):
+def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex, wait_condition, thread):
     """
     Main function to run the optimization.
     Includes a callback to update the progress bar.
@@ -686,7 +710,7 @@ def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition
             mutex.unlock()
 
             # 将 progress_callback 传递给 generate_patterns
-            patterns = generate_patterns(s["length"], demand_lengths, kerf_width, progress_callback, total_demands)
+            patterns = generate_patterns(s["length"], demand_lengths, kerf_width, max_cut_types, progress_callback, total_demands)
             stock_patterns[s["length"]] = {
                 "patterns": patterns,
                 "stock_qty": s["quantity"]
@@ -764,7 +788,7 @@ def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition
 
                     pattern = stock_patterns[stock_len]["patterns"][var_idx]
                     # 汇总统计
-                    cutting_pattern = " + ".join([f"{l}mm{c}" for c, l in zip(pattern["combo"], demand_lengths) if c > 0])
+                    cutting_pattern = " + ".join([f"{l}mm×{c}" for c, l in zip(pattern["combo"], demand_lengths) if c > 0])
                     plan_summary.append({
                         "原材料长度(mm)": stock_len,
                         "使用次数": used,
