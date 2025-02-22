@@ -803,6 +803,11 @@ def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition
             total_initial_stock_length = sum(s["length"] * s["quantity"] for s in stock)
             total_utilization = round((total_finished_length / total_stock_length_used) * 100, 2) if total_stock_length_used else 0
 
+            # 计算总材料利用率（含锯缝）
+            total_kerf_loss = sum(detail["锯缝损耗(mm)"] for detail in detailed_records)
+            total_material_used_with_kerf = total_finished_length + total_kerf_loss
+            total_utilization_with_kerf = round((total_finished_length / total_material_used_with_kerf) * 100, 2) if total_material_used_with_kerf else 0
+
             # 生成Excel报告
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             # 获取当前时间并格式化
@@ -827,7 +832,7 @@ def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition
 
                 df_summary = df_summary[[
                     "原材料长度(mm)", "使用次数", "切割模式",
-                    "总锯缝损耗(mm)", "总余料(mm)", "平均利用率(%)", "整体利用率(%)"
+                    "总锯缝损耗(mm)", "总余料(mm)", "平均利用率(%)"
                 ]]
                 df_summary.to_excel(writer, sheet_name="方案汇总", index=False)
 
@@ -857,18 +862,20 @@ def main(kerf_width, solver_time_limit, progress_callback, mutex, wait_condition
                 summary_data = {
                     "项目": [
                         "原材料总数",
-                        "原材料总使用长度(mm)",
+                        "原材料总使用长度(m)",
                         "切割出来的成品总数量",
-                        "切割出来的成品总长度(mm)",
+                        "切割出来的成品总长度(m)",
                         "总材料利用率(%)",
+                        "总材料利用率（含锯缝）(%)",
                         "最长余料长度(mm)"
                     ],
                     "数值": [
                         total_stock_count,
-                        total_stock_length_used,
+                        round(total_stock_length_used / 1000, 2),
                         total_finished_count,
-                        total_finished_length,
+                        round(total_finished_length / 1000, 2),
                         total_utilization,
+                        total_utilization_with_kerf,
                         max_waste
                     ]
                 }
