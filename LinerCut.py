@@ -154,7 +154,7 @@ class MainWindow(QWidget):
 
         try:
             # 使用绝对路径
-            icon_path = "C:/Users/tobei/AppData/Roaming/JetBrains/PyCharm2024.3/scratches/LinerCut/icon/LinerCut.png"
+            icon_path = "C:/Users/tobei/AppData/Roaming/JetBrains/PyCharm2024.3/scratches/LinerCut/icon/LinerCut.ico"
 
             pixmap = QPixmap(icon_path)
             pixmap = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)  # 调整图标大小
@@ -210,6 +210,7 @@ class MainWindow(QWidget):
         saw_kerf_hbox = QHBoxLayout()
         self.saw_kerf_label = QLabel("锯缝 (mm):")
         self.saw_kerf_input = QLineEdit("5")
+        self.saw_kerf_input.setAlignment(Qt.AlignCenter)  # 设置文本居中
         self.saw_kerf_input.setValidator(QIntValidator())  # 只允许整数
         self.saw_kerf_input.setMaximumWidth(50)  # 进一步减少锯缝输入栏宽度
 
@@ -217,21 +218,11 @@ class MainWindow(QWidget):
         saw_kerf_hbox.addWidget(self.saw_kerf_label)
         saw_kerf_hbox.addWidget(self.saw_kerf_input)
 
-        # 创建一个 QHBoxLayout 用于求解时间标签和输入框，实现水平布局
-        solver_time_hbox = QHBoxLayout()
-        self.solver_time_label = QLabel("求解时间 (秒):")
-        self.solver_time_input = QLineEdit("60")
-        self.solver_time_input.setValidator(QIntValidator())  # 只允许整数
-        self.solver_time_input.setMaximumWidth(50)  # 进一步减少求解时间输入栏宽度
-
-        # 将标签和输入框添加到水平布局中
-        solver_time_hbox.addWidget(self.solver_time_label)
-        solver_time_hbox.addWidget(self.solver_time_input)
-
         # 创建一个 QHBoxLayout 用于调锯次数标签和输入框，实现水平布局
         saw_count_hbox = QHBoxLayout()
         self.saw_count_label = QLabel("调锯次数:")
         self.saw_count_input = QLineEdit("5")
+        self.saw_count_input.setAlignment(Qt.AlignCenter)  # 设置文本居中
         self.saw_count_input.setValidator(QIntValidator())  # 只允许整数
         self.saw_count_input.setMaximumWidth(50)  # 进一步减少调锯次数输入栏宽度
 
@@ -239,10 +230,22 @@ class MainWindow(QWidget):
         saw_count_hbox.addWidget(self.saw_count_label)
         saw_count_hbox.addWidget(self.saw_count_input)
 
+        # 创建一个 QHBoxLayout 用于求解时间标签和输入框，实现水平布局
+        solver_time_hbox = QHBoxLayout()
+        self.solver_time_label = QLabel("求解时间 (秒):")
+        self.solver_time_input = QLineEdit("60")
+        self.solver_time_input.setAlignment(Qt.AlignCenter)  # 设置文本居中
+        self.solver_time_input.setValidator(QIntValidator())  # 只允许整数
+        self.solver_time_input.setMaximumWidth(50)  # 进一步减少求解时间输入栏宽度
+
+        # 将标签和输入框添加到水平布局中
+        solver_time_hbox.addWidget(self.solver_time_label)
+        solver_time_hbox.addWidget(self.solver_time_input)
+
         # 将水平布局添加到参数布局中
         parameter_layout.addLayout(saw_kerf_hbox)
-        parameter_layout.addLayout(solver_time_hbox)
         parameter_layout.addLayout(saw_count_hbox)
+        parameter_layout.addLayout(solver_time_hbox)
 
         # 添加伸缩器，使标签和输入框靠左对齐
         parameter_layout.addStretch(1)
@@ -318,6 +321,12 @@ class MainWindow(QWidget):
         # 添加粘贴快捷键，方便用户输入数据
         self.stock_table.keyPressEvent = self.stock_table_keyPressEvent
         self.demands_table.keyPressEvent = self.demands_table_keyPressEvent
+
+        # 添加 ESC 快捷键
+        self.shortcut_escape = QAction("Exit", self)
+        self.shortcut_escape.setShortcut("Esc")
+        self.shortcut_escape.triggered.connect(self.close)
+        self.addAction(self.shortcut_escape)
 
     def stock_table_keyPressEvent(self, event):
         if event.key() == Qt.Key_V and (event.modifiers() & Qt.ControlModifier):
@@ -762,7 +771,7 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
         solver.SetTimeLimit(solver_time_limit)
         status = solver.Solve()
 
-        if status == solver.OPTIMAL:
+        if (status == solver.OPTIMAL) or (status == solver.FEASIBLE):
             print("优化成功，正在生成报告...")
             detailed_records = []
             plan_summary = []
@@ -850,20 +859,28 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
                 df_detail.to_excel(writer, sheet_name="详细记录", index=False)
 
                 # 方案汇总表
-                df_summary = pd.DataFrame(plan_summary)
+                # 创建包含序号的列表
+                plan_summary_with_index = []
+                for i, summary in enumerate(plan_summary):
+                    summary_with_index = {"序号": i + 1, **summary}  # 将序号添加到字典中
+                    plan_summary_with_index.append(summary_with_index)
+
+                df_summary = pd.DataFrame(plan_summary_with_index)
+
                 # 计算整体利用率
                 total_consumption = df_summary["原材料长度(mm)"] * df_summary["使用次数"] - df_summary["总余料(mm)"]
                 total_stock = df_summary["原材料长度(mm)"] * df_summary["使用次数"]
                 df_summary["整体利用率(%)"] = round((total_consumption / total_stock) * 100, 2)
 
+                # 确保 "序号" 列在最前面
                 df_summary = df_summary[[
-                    "原材料长度(mm)", "使用次数", "切割模式",
-                    "总锯缝损耗(mm)", "总余料(mm)", "平均利用率(%)"
+                    "序号", "原材料长度(mm)", "使用次数", "切割模式",
+                    "总锯缝损耗(mm)", "总余料(mm)", "平均利用率(%)", "整体利用率(%)"
                 ]]
                 df_summary.to_excel(writer, sheet_name="方案汇总", index=False)
 
                 # 需求完成情况
-                completed = []
+                completed_with_index = []
                 for i, demand in enumerate(demands):
                     total = sum(
                         p["combo"][i] * var.solution_value()
@@ -876,13 +893,15 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
                     # Ensure that the completed quantity does not exceed the demand quantity
                     completed_quantity = min(int(total), demands[i]["quantity"])
 
-                    completed.append({
+                    completed_with_index.append({
+                        "序号": i + 1,  # 添加序号
                         "成品规格(mm)": demands[i]["length"],
                         "需求数量": demands[i]["quantity"],
                         "完成数量": completed_quantity,
                         "完成率(%)": round(min(100, 100 * completed_quantity / demands[i]["quantity"]), 2)
                     })
-                pd.DataFrame(completed).to_excel(writer, sheet_name="需求完成", index=False)
+                df_completed = pd.DataFrame(completed_with_index)
+                df_completed.to_excel(writer, sheet_name="需求完成", index=False)
 
                 # 新增统计信息表
                 summary_data = {
@@ -905,22 +924,39 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
                         max_waste
                     ]
                 }
-                df_summary_info = pd.DataFrame(summary_data)
-                df_summary_info.to_excel(writer, sheet_name="统计信息", index=False)
+                df_summary_info = pd.DataFrame(summary_data, index=range(1, len(summary_data["项目"]) + 1))
+                df_summary_info.index.name = "序号"  # 设置索引列名为 "序号"
+                df_summary_info.to_excel(writer, sheet_name="统计信息")
 
-                # 设置边框样式
-                thin_border = Border(bottom=Side(style='thin', color='b7ffb7'))
+                # 定义微软雅黑字体，不加粗
+                msyh_font = Font(name='微软雅黑', bold=False)
 
-                # 循环所有sheet，添加边框和隔行浅灰色背景
+                # 定义居中对齐样式
+                center_alignment = Alignment(horizontal='center', vertical='center')
+
+                # 循环所有sheet，添加隔行浅灰色背景
                 for sheet_name in writer.sheets:
                     sheet = writer.sheets[sheet_name]
+
+                    # 应用字体样式到所有单元格
+                    for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, min_col=1, max_col=sheet.max_column):
+                        for cell in row:
+                            cell.font = msyh_font
+                            # 设置所有单元格不对齐
+                            cell.border = Border(bottom=None,
+                                                 top=None,
+                                                 left=None,
+                                                 right=None)
+
+                    # 居中显示序号列
+                    for cell in sheet['A']:  # 'A' 是序号列
+                        cell.alignment = center_alignment
+
                     # 隔行设置背景色
                     for row_index, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row, min_col=1, max_col=sheet.max_column), start=2):
                         if row_index % 2 == 0:  # 偶数行
                             for cell in row:
                                 cell.fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
-                        for cell in row:
-                            cell.border = thin_border
 
                     # 自适应列宽
                     for column_cells in sheet.columns:
@@ -932,7 +968,7 @@ def main(kerf_width, solver_time_limit, max_cut_types, progress_callback, mutex,
                                     max_length = len(str(cell.value))
                             except:
                                 pass
-                        adjusted_width = (max_length + 2) * 1.2
+                        adjusted_width = (max_length + 2) * 1.5
                         sheet.column_dimensions[column].width = adjusted_width
 
                     # 取消网格线
@@ -956,6 +992,14 @@ if __name__ == "__main__":
         import ctypes
         ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
     app = QApplication(sys.argv)
+
+    # 尝试设置应用程序图标
+    try:
+        app_icon = QIcon("C:/Users/tobei/AppData/Roaming/JetBrains/PyCharm2024.3/scratches/LinerCut/icon/LinerCut.png")  # 替换为你的图标路径
+        app.setWindowIcon(app_icon)
+    except Exception as e:
+        print(f"Error setting application icon: {e}")
+
     # 修改为False，确保所有窗口关闭后程序退出
     app.setQuitOnLastWindowClosed(False)
     window = MainWindow()
